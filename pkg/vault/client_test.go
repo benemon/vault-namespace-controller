@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -213,17 +214,27 @@ func TestVaultClient_CreateNamespace(t *testing.T) {
 	// We can test CreateNamespace with a mock
 	mockClient := new(MockVaultClient)
 
-	// Setup expectations
+	// Setup expectations for success cases
 	mockClient.On("CreateNamespace", mock.Anything, "test-namespace").Return(nil)
 	mockClient.On("CreateNamespace", mock.Anything, "parent/child").Return(nil)
 
-	// Call the method
+	// Setup expectations for error cases
+	operationErr := errors.New("operation failed")
+	mockClient.On("CreateNamespace", mock.Anything, "error-namespace").Return(operationErr)
+
+	// Call the method for success cases
 	err1 := mockClient.CreateNamespace(context.Background(), "test-namespace")
 	err2 := mockClient.CreateNamespace(context.Background(), "parent/child")
+
+	// Call the method for error case
+	err3 := mockClient.CreateNamespace(context.Background(), "error-namespace")
 
 	// Verify expectations
 	assert.NoError(t, err1)
 	assert.NoError(t, err2)
+	assert.Error(t, err3)
+	assert.Equal(t, operationErr, err3)
+
 	mockClient.AssertExpectations(t)
 }
 
@@ -232,16 +243,60 @@ func TestVaultClient_DeleteNamespace(t *testing.T) {
 	// We can test DeleteNamespace with a mock
 	mockClient := new(MockVaultClient)
 
-	// Setup expectations
+	// Setup expectations for success cases
 	mockClient.On("DeleteNamespace", mock.Anything, "test-namespace").Return(nil)
 	mockClient.On("DeleteNamespace", mock.Anything, "parent/child").Return(nil)
 
-	// Call the method
+	// Setup expectations for error cases
+	operationErr := errors.New("operation failed")
+	mockClient.On("DeleteNamespace", mock.Anything, "error-namespace").Return(operationErr)
+
+	// Call the method for success cases
 	err1 := mockClient.DeleteNamespace(context.Background(), "test-namespace")
 	err2 := mockClient.DeleteNamespace(context.Background(), "parent/child")
+
+	// Call the method for error case
+	err3 := mockClient.DeleteNamespace(context.Background(), "error-namespace")
 
 	// Verify expectations
 	assert.NoError(t, err1)
 	assert.NoError(t, err2)
+	assert.Error(t, err3)
+	assert.Equal(t, operationErr, err3)
+
+	mockClient.AssertExpectations(t)
+}
+
+// TestVaultClient_NamespaceExists tests the NamespaceExists method.
+func TestVaultClient_NamespaceExists(t *testing.T) {
+	// We can test NamespaceExists with a mock
+	mockClient := new(MockVaultClient)
+
+	// Setup expectations for success cases
+	mockClient.On("NamespaceExists", mock.Anything, "existing-namespace").Return(true, nil)
+	mockClient.On("NamespaceExists", mock.Anything, "non-existing-namespace").Return(false, nil)
+
+	// Setup expectations for error cases
+	operationErr := errors.New("operation failed")
+	mockClient.On("NamespaceExists", mock.Anything, "error-namespace").Return(false, operationErr)
+
+	// Call the method for success cases
+	exists1, err1 := mockClient.NamespaceExists(context.Background(), "existing-namespace")
+	exists2, err2 := mockClient.NamespaceExists(context.Background(), "non-existing-namespace")
+
+	// Call the method for error case
+	exists3, err3 := mockClient.NamespaceExists(context.Background(), "error-namespace")
+
+	// Verify expectations
+	assert.True(t, exists1)
+	assert.NoError(t, err1)
+
+	assert.False(t, exists2)
+	assert.NoError(t, err2)
+
+	assert.False(t, exists3)
+	assert.Error(t, err3)
+	assert.Equal(t, operationErr, err3)
+
 	mockClient.AssertExpectations(t)
 }

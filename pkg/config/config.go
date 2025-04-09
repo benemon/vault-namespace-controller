@@ -1,10 +1,18 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v2"
+)
+
+// Common errors
+var (
+	ErrMissingVaultAddress = errors.New("vault address is required")
+	ErrMissingAuthType     = errors.New("vault auth type is required")
+	ErrUnsupportedAuthType = errors.New("unsupported auth method")
 )
 
 // VaultAuthConfig contains configuration for Vault authentication.
@@ -152,23 +160,23 @@ func LoadConfig(path string) (*ControllerConfig, error) {
 func validateConfig(config *ControllerConfig) error {
 	// Validate Vault address
 	if config.Vault.Address == "" {
-		return fmt.Errorf("vault address is required")
+		return ErrMissingVaultAddress
 	}
 
 	// Validate auth configuration
 	if config.Vault.Auth.Type == "" {
-		return fmt.Errorf("vault auth type is required")
+		return ErrMissingAuthType
 	}
 
 	// Validate auth method
 	switch config.Vault.Auth.Type {
 	case "token":
 		if config.Vault.Auth.Token == "" && config.Vault.Auth.TokenPath == "" {
-			return fmt.Errorf("either token or tokenPath is required for token auth method")
+			return errors.New("either token or tokenPath is required for token auth method")
 		}
 	case "kubernetes":
 		if config.Vault.Auth.Role == "" {
-			return fmt.Errorf("role is required for kubernetes auth method")
+			return errors.New("role is required for kubernetes auth method")
 		}
 	case "approle":
 		// Check direct values
@@ -177,10 +185,10 @@ func validateConfig(config *ControllerConfig) error {
 		hasPathValues := config.Vault.Auth.RoleIDPath != "" && config.Vault.Auth.SecretIDPath != ""
 
 		if !hasDirectValues && !hasPathValues {
-			return fmt.Errorf("either roleId+secretId or roleIdPath+secretIdPath are required for approle auth method")
+			return errors.New("either roleId+secretId or roleIdPath+secretIdPath are required for approle auth method")
 		}
 	default:
-		return fmt.Errorf("unsupported auth method: %s", config.Vault.Auth.Type)
+		return fmt.Errorf("%w: %s", ErrUnsupportedAuthType, config.Vault.Auth.Type)
 	}
 
 	return nil

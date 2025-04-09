@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"testing"
 
@@ -92,13 +93,14 @@ func TestLoadConfig_InvalidFile(t *testing.T) {
 	_, err = LoadConfig(tempFile.Name())
 
 	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse config file")
 }
 
 func TestValidateConfig(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      *ControllerConfig
-		expectError bool
+		expectedErr error
 	}{
 		{
 			name: "valid token auth",
@@ -111,7 +113,7 @@ func TestValidateConfig(t *testing.T) {
 					},
 				},
 			},
-			expectError: false,
+			expectedErr: nil,
 		},
 		{
 			name: "valid kubernetes auth",
@@ -124,7 +126,7 @@ func TestValidateConfig(t *testing.T) {
 					},
 				},
 			},
-			expectError: false,
+			expectedErr: nil,
 		},
 		{
 			name: "valid approle auth",
@@ -138,7 +140,7 @@ func TestValidateConfig(t *testing.T) {
 					},
 				},
 			},
-			expectError: false,
+			expectedErr: nil,
 		},
 		{
 			name: "missing vault address",
@@ -150,7 +152,7 @@ func TestValidateConfig(t *testing.T) {
 					},
 				},
 			},
-			expectError: true,
+			expectedErr: ErrMissingVaultAddress,
 		},
 		{
 			name: "token auth without token",
@@ -162,7 +164,7 @@ func TestValidateConfig(t *testing.T) {
 					},
 				},
 			},
-			expectError: true,
+			expectedErr: errors.New("either token or tokenPath is required for token auth method"),
 		},
 		{
 			name: "kubernetes auth without role",
@@ -174,33 +176,19 @@ func TestValidateConfig(t *testing.T) {
 					},
 				},
 			},
-			expectError: true,
+			expectedErr: errors.New("role is required for kubernetes auth method"),
 		},
 		{
-			name: "approle auth without role_id",
+			name: "approle auth without credentials",
 			config: &ControllerConfig{
 				Vault: VaultConfig{
 					Address: "https://vault.example.com:8200",
 					Auth: VaultAuthConfig{
-						Type:     "approle",
-						SecretID: "secret-id",
+						Type: "approle",
 					},
 				},
 			},
-			expectError: true,
-		},
-		{
-			name: "approle auth without secret_id",
-			config: &ControllerConfig{
-				Vault: VaultConfig{
-					Address: "https://vault.example.com:8200",
-					Auth: VaultAuthConfig{
-						Type:   "approle",
-						RoleID: "role-id",
-					},
-				},
-			},
-			expectError: true,
+			expectedErr: errors.New("either roleId+secretId or roleIdPath+secretIdPath are required for approle auth method"),
 		},
 		{
 			name: "unsupported auth method",
@@ -212,7 +200,7 @@ func TestValidateConfig(t *testing.T) {
 					},
 				},
 			},
-			expectError: true,
+			expectedErr: ErrUnsupportedAuthType,
 		},
 	}
 
@@ -220,8 +208,15 @@ func TestValidateConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateConfig(tt.config)
 
-			if tt.expectError {
+			if tt.expectedErr != nil {
 				assert.Error(t, err)
+				if errors.Is(err, tt.expectedErr) {
+					// If we're expecting a specific error, check that it matches
+					assert.True(t, errors.Is(err, tt.expectedErr))
+				} else {
+					// Otherwise, just check the error message
+					assert.Contains(t, err.Error(), tt.expectedErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}

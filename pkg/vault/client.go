@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -10,6 +11,15 @@ import (
 	"github.com/benemon/vault-namespace-controller/pkg/config"
 	"github.com/hashicorp/vault/api"
 	auth "github.com/hashicorp/vault/api/auth/kubernetes"
+)
+
+// Common error definitions
+var (
+	ErrVaultClientCreate       = errors.New("failed to create vault client")
+	ErrVaultTLSConfig          = errors.New("failed to configure TLS for vault client")
+	ErrVaultAuth               = errors.New("failed to authenticate to vault")
+	ErrVaultNamespaceOperation = errors.New("vault namespace operation failed")
+	ErrVaultNamespaceNotFound  = errors.New("vault namespace not found")
 )
 
 // Client provides methods for interacting with Vault Enterprise namespaces.
@@ -64,14 +74,14 @@ func NewClient(config config.VaultConfig) (Client, error) {
 			Insecure:   config.Insecure,
 		}
 		if err := clientConfig.ConfigureTLS(tlsConfig); err != nil {
-			return nil, fmt.Errorf("failed to configure TLS for Vault client: %w", err)
+			return nil, fmt.Errorf("%w: %v", ErrVaultTLSConfig, err)
 		}
 	}
 
 	// Create the client
 	client, err := api.NewClient(clientConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Vault client: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrVaultClientCreate, err)
 	}
 
 	// Set namespace root if specified
@@ -85,7 +95,7 @@ func NewClient(config config.VaultConfig) (Client, error) {
 
 	// Authenticate based on the configured method
 	if err := authenticate(client, config); err != nil {
-		return nil, fmt.Errorf("failed to authenticate to Vault: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrVaultAuth, err)
 	}
 
 	return &vaultClient{
@@ -148,16 +158,16 @@ func authenticateWithKubernetes(client *api.Client, config config.VaultConfig) e
 		auth.WithMountPath(kubernetesAuthPath),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to initialize Kubernetes auth: %w", err)
+		return fmt.Errorf("failed to initialize kubernetes auth: %w", err)
 	}
 
 	authInfo, err := client.Auth().Login(context.Background(), k8sAuth)
 	if err != nil {
-		return fmt.Errorf("failed to login with Kubernetes auth: %w", err)
+		return fmt.Errorf("failed to login with kubernetes auth: %w", err)
 	}
 
 	if authInfo == nil {
-		return fmt.Errorf("no auth info was returned after login")
+		return errors.New("no auth info was returned after login")
 	}
 
 	return nil
@@ -201,11 +211,11 @@ func authenticateWithAppRole(client *api.Client, config config.VaultConfig) erro
 	loginPath := fmt.Sprintf("auth/%s/login", appRoleAuthPath)
 	resp, err := client.Logical().Write(loginPath, data)
 	if err != nil {
-		return fmt.Errorf("failed to login with AppRole: %w", err)
+		return fmt.Errorf("failed to login with approle: %w", err)
 	}
 
 	if resp == nil || resp.Auth == nil {
-		return fmt.Errorf("no auth info was returned after AppRole login")
+		return errors.New("no auth info was returned after approle login")
 	}
 
 	client.SetToken(resp.Auth.ClientToken)
@@ -247,7 +257,7 @@ func (c *vaultClient) NamespaceExists(ctx context.Context, namespacePath string)
 	// Extract list of keys
 	keys, ok := secret.Data["keys"].([]interface{})
 	if !ok {
-		return false, fmt.Errorf("unexpected response format when listing namespaces: 'keys' is not a list")
+		return false, errors.New("unexpected response format when listing namespaces: 'keys' is not a list")
 	}
 
 	// Look for the child namespace
@@ -282,12 +292,13 @@ func (c *vaultClient) CreateNamespace(ctx context.Context, namespacePath string)
 
 	resp, err := c.client.RawRequestWithContext(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to create namespace %q: %w", namespacePath, err)
+		return fmt.Errorf("%w: failed to create namespace %q: %v", ErrVaultNamespaceOperation, namespacePath, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 && resp.StatusCode != 204 {
-		return fmt.Errorf("unexpected status code when creating namespace %q: %d", namespacePath, resp.StatusCode)
+		return fmt.Errorf("%w: unexpected status code when creating namespace %q: %d",
+			ErrVaultNamespaceOperation, namespacePath, resp.StatusCode)
 	}
 
 	return nil
@@ -309,12 +320,13 @@ func (c *vaultClient) DeleteNamespace(ctx context.Context, namespacePath string)
 
 	resp, err := c.client.RawRequestWithContext(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to delete namespace %q: %w", namespacePath, err)
+		return fmt.Errorf("%w: failed to delete namespace %q: %v", ErrVaultNamespaceOperation, namespacePath, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 && resp.StatusCode != 204 {
-		return fmt.Errorf("unexpected status code when deleting namespace %q: %d", namespacePath, resp.StatusCode)
+		return fmt.Errorf("%w: unexpected status code when deleting namespace %q: %d",
+			ErrVaultNamespaceOperation, namespacePath, resp.StatusCode)
 	}
 
 	return nil

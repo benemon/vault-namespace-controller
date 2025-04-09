@@ -2,7 +2,9 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr/testr"
 	"github.com/stretchr/testify/assert"
@@ -11,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -89,6 +92,7 @@ func TestNamespaceReconciler_shouldSyncNamespace(t *testing.T) {
 					IncludeNamespaces: tt.includePattern,
 					ExcludeNamespaces: tt.excludePattern,
 				},
+				Log: testr.New(t),
 			}
 
 			result := r.shouldSyncNamespace(tt.namespaceName)
@@ -151,6 +155,7 @@ func TestNamespaceReconciler_formatVaultNamespacePath(t *testing.T) {
 						NamespaceRoot: tt.namespaceRoot,
 					},
 				},
+				Log: testr.New(t),
 			}
 
 			result := r.formatVaultNamespacePath(tt.namespaceName)
@@ -176,6 +181,9 @@ func TestNamespaceReconciler_Reconcile(t *testing.T) {
 		expectCreation    bool
 		expectDeletion    bool
 		setupMocks        bool // Whether to set up expectations for Vault client
+		expectedResult    ctrl.Result
+		expectedError     error
+		mockError         error // Error to return from the vault client mock
 	}{
 		{
 			name: "Should create Vault namespace when K8s namespace exists and should be synced",
@@ -188,7 +196,9 @@ func TestNamespaceReconciler_Reconcile(t *testing.T) {
 			shouldSync:        true,
 			expectCreation:    true,
 			expectDeletion:    false,
-			setupMocks:        true, // We expect Vault client methods to be called
+			setupMocks:        true,
+			expectedResult:    ctrl.Result{},
+			expectedError:     nil,
 		},
 		{
 			name: "Should not create Vault namespace when it already exists",
@@ -201,7 +211,9 @@ func TestNamespaceReconciler_Reconcile(t *testing.T) {
 			shouldSync:        true,
 			expectCreation:    false,
 			expectDeletion:    false,
-			setupMocks:        true, // We expect Vault client methods to be called
+			setupMocks:        true,
+			expectedResult:    ctrl.Result{},
+			expectedError:     nil,
 		},
 		{
 			name: "Should not create Vault namespace when namespace should not be synced",
@@ -214,7 +226,9 @@ func TestNamespaceReconciler_Reconcile(t *testing.T) {
 			shouldSync:        false,
 			expectCreation:    false,
 			expectDeletion:    false,
-			setupMocks:        false, // We don't expect Vault client methods to be called
+			setupMocks:        false,
+			expectedResult:    ctrl.Result{},
+			expectedError:     nil,
 		},
 		{
 			name:              "Should delete Vault namespace when K8s namespace is deleted and delete is enabled",
@@ -224,7 +238,9 @@ func TestNamespaceReconciler_Reconcile(t *testing.T) {
 			deleteEnabled:     true,
 			expectCreation:    false,
 			expectDeletion:    true,
-			setupMocks:        true, // We expect Vault client methods to be called
+			setupMocks:        true,
+			expectedResult:    ctrl.Result{},
+			expectedError:     nil,
 		},
 		{
 			name:              "Should not delete Vault namespace when delete is disabled",
@@ -234,7 +250,38 @@ func TestNamespaceReconciler_Reconcile(t *testing.T) {
 			deleteEnabled:     false,
 			expectCreation:    false,
 			expectDeletion:    false,
-			setupMocks:        false, // We don't expect Vault client methods to be called
+			setupMocks:        false,
+			expectedResult:    ctrl.Result{},
+			expectedError:     nil,
+		},
+		{
+			name: "Should handle Vault creation error",
+			namespace: &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "error-app",
+				},
+			},
+			existingNamespace: false,
+			shouldSync:        true,
+			expectCreation:    true,
+			expectDeletion:    false,
+			setupMocks:        true,
+			mockError:         errors.New("vault error"),
+			expectedResult:    ctrl.Result{RequeueAfter: 30 * time.Second},
+			expectedError:     ErrNamespaceCreation,
+		},
+		{
+			name:              "Should handle Vault deletion error",
+			namespace:         nil, // Namespace not found, simulating deletion
+			existingNamespace: true,
+			shouldSync:        true,
+			deleteEnabled:     true,
+			expectCreation:    false,
+			expectDeletion:    true,
+			setupMocks:        true,
+			mockError:         errors.New("vault error"),
+			expectedResult:    ctrl.Result{RequeueAfter: 30 * time.Second},
+			expectedError:     ErrNamespaceDeletion,
 		},
 	}
 
@@ -262,16 +309,27 @@ func TestNamespaceReconciler_Reconcile(t *testing.T) {
 				}
 
 				// Set up the NamespaceExists expectation
-				mockClient.On("NamespaceExists", mock.Anything, vaultNamespaceName).Return(tt.existingNamespace, nil)
+				if tt.mockError != nil && tt.expectDeletion {
+					// For deletion with error
+					mockClient.On("NamespaceExists", mock.Anything, vaultNamespaceName).Return(tt.existingNamespace, nil)
+					mockClient.On("DeleteNamespace", mock.Anything, vaultNamespaceName).Return(tt.mockError)
+				} else if tt.mockError != nil && tt.expectCreation {
+					// For creation with error
+					mockClient.On("NamespaceExists", mock.Anything, vaultNamespaceName).Return(tt.existingNamespace, nil)
+					mockClient.On("CreateNamespace", mock.Anything, vaultNamespaceName).Return(tt.mockError)
+				} else {
+					// Normal flow without errors
+					mockClient.On("NamespaceExists", mock.Anything, vaultNamespaceName).Return(tt.existingNamespace, nil)
 
-				// Set up CreateNamespace expectation if needed
-				if tt.expectCreation {
-					mockClient.On("CreateNamespace", mock.Anything, vaultNamespaceName).Return(nil)
-				}
+					// Set up CreateNamespace expectation if needed
+					if tt.expectCreation && !tt.existingNamespace {
+						mockClient.On("CreateNamespace", mock.Anything, vaultNamespaceName).Return(nil)
+					}
 
-				// Set up DeleteNamespace expectation if needed
-				if tt.expectDeletion {
-					mockClient.On("DeleteNamespace", mock.Anything, vaultNamespaceName).Return(nil)
+					// Set up DeleteNamespace expectation if needed
+					if tt.expectDeletion && tt.existingNamespace {
+						mockClient.On("DeleteNamespace", mock.Anything, vaultNamespaceName).Return(nil)
+					}
 				}
 			}
 
@@ -304,8 +362,17 @@ func TestNamespaceReconciler_Reconcile(t *testing.T) {
 			}
 
 			// Call Reconcile
-			_, err := reconciler.Reconcile(context.Background(), req)
-			assert.NoError(t, err)
+			result, err := reconciler.Reconcile(context.Background(), req)
+
+			if tt.expectedError != nil {
+				assert.Error(t, err)
+				assert.True(t, errors.Is(err, tt.expectedError),
+					"Expected error of type %v, got %v", tt.expectedError, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			assert.Equal(t, tt.expectedResult, result)
 
 			// Assert that the expected methods were called
 			mockClient.AssertExpectations(t)
@@ -357,6 +424,178 @@ func TestMatchesAnyPattern(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := matchesAnyPattern(tt.input, tt.patterns)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestHandleNamespaceCreation tests the handleNamespaceCreation method.
+func TestHandleNamespaceCreation(t *testing.T) {
+	tests := []struct {
+		name               string
+		namespaceName      string
+		namespaceExists    bool
+		namespaceExistsErr error
+		createNamespaceErr error
+		expectedError      error
+	}{
+		{
+			name:            "create new namespace successfully",
+			namespaceName:   "test-namespace",
+			namespaceExists: false,
+			expectedError:   nil,
+		},
+		{
+			name:            "namespace already exists",
+			namespaceName:   "existing-namespace",
+			namespaceExists: true,
+			expectedError:   nil,
+		},
+		{
+			name:               "error checking namespace existence",
+			namespaceName:      "error-namespace",
+			namespaceExistsErr: errors.New("connection error"),
+			expectedError:      ErrNamespaceCheck,
+		},
+		{
+			name:               "error creating namespace",
+			namespaceName:      "create-error-namespace",
+			namespaceExists:    false,
+			createNamespaceErr: errors.New("failed to create"),
+			expectedError:      ErrNamespaceCreation,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create mock client
+			mockClient := new(mockVaultClient)
+
+			// Set up expectations
+			vaultNamespacePath := "k8s-" + tt.namespaceName
+			mockClient.On("NamespaceExists", mock.Anything, vaultNamespacePath).
+				Return(tt.namespaceExists, tt.namespaceExistsErr)
+
+			if !tt.namespaceExists && tt.namespaceExistsErr == nil {
+				mockClient.On("CreateNamespace", mock.Anything, vaultNamespacePath).
+					Return(tt.createNamespaceErr)
+			}
+
+			// Create reconciler with mock
+			reconciler := &NamespaceReconciler{
+				Log:         testr.New(t),
+				VaultClient: mockClient,
+				Config: &config.ControllerConfig{
+					NamespaceFormat: "k8s-%s",
+				},
+			}
+
+			// Call the method
+			err := reconciler.handleNamespaceCreation(context.Background(), tt.namespaceName)
+
+			// Check the result
+			if tt.expectedError != nil {
+				assert.Error(t, err)
+				assert.True(t, errors.Is(err, tt.expectedError),
+					"Expected error of type %v, got %v", tt.expectedError, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// Verify mock calls
+			mockClient.AssertExpectations(t)
+		})
+	}
+}
+
+// TestHandleNamespaceDeletion tests the handleNamespaceDeletion method.
+func TestHandleNamespaceDeletion(t *testing.T) {
+	tests := []struct {
+		name               string
+		namespaceName      string
+		deleteEnabled      bool
+		namespaceExists    bool
+		namespaceExistsErr error
+		deleteNamespaceErr error
+		expectedError      error
+	}{
+		{
+			name:          "deletion disabled",
+			namespaceName: "test-namespace",
+			deleteEnabled: false,
+			expectedError: nil,
+		},
+		{
+			name:            "delete existing namespace successfully",
+			namespaceName:   "existing-namespace",
+			deleteEnabled:   true,
+			namespaceExists: true,
+			expectedError:   nil,
+		},
+		{
+			name:            "namespace doesn't exist",
+			namespaceName:   "non-existing-namespace",
+			deleteEnabled:   true,
+			namespaceExists: false,
+			expectedError:   nil,
+		},
+		{
+			name:               "error checking namespace existence",
+			namespaceName:      "error-namespace",
+			deleteEnabled:      true,
+			namespaceExistsErr: errors.New("connection error"),
+			expectedError:      ErrNamespaceCheck,
+		},
+		{
+			name:               "error deleting namespace",
+			namespaceName:      "delete-error-namespace",
+			deleteEnabled:      true,
+			namespaceExists:    true,
+			deleteNamespaceErr: errors.New("failed to delete"),
+			expectedError:      ErrNamespaceDeletion,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create mock client
+			mockClient := new(mockVaultClient)
+
+			// Set up expectations
+			if tt.deleteEnabled {
+				vaultNamespacePath := "k8s-" + tt.namespaceName
+				mockClient.On("NamespaceExists", mock.Anything, vaultNamespacePath).
+					Return(tt.namespaceExists, tt.namespaceExistsErr)
+
+				if tt.namespaceExists && tt.namespaceExistsErr == nil {
+					mockClient.On("DeleteNamespace", mock.Anything, vaultNamespacePath).
+						Return(tt.deleteNamespaceErr)
+				}
+			}
+
+			// Create reconciler with mock
+			reconciler := &NamespaceReconciler{
+				Log:         testr.New(t),
+				VaultClient: mockClient,
+				Config: &config.ControllerConfig{
+					NamespaceFormat:       "k8s-%s",
+					DeleteVaultNamespaces: tt.deleteEnabled,
+				},
+			}
+
+			// Call the method
+			err := reconciler.handleNamespaceDeletion(context.Background(), tt.namespaceName)
+
+			// Check the result
+			if tt.expectedError != nil {
+				assert.Error(t, err)
+				assert.True(t, errors.Is(err, tt.expectedError),
+					"Expected error of type %v, got %v", tt.expectedError, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// Verify mock calls
+			mockClient.AssertExpectations(t)
 		})
 	}
 }
