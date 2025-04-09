@@ -7,15 +7,15 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// VaultAuthConfig contains configuration for Vault authentication
+// VaultAuthConfig contains configuration for Vault authentication.
 type VaultAuthConfig struct {
-	// Auth type: kubernetes, token, or approle
+	// Type specifies the auth method: kubernetes, token, or approle.
 	Type string `yaml:"type"`
 
-	// Optional: custom path where the auth method is mounted
+	// Path specifies the custom path where the auth method is mounted.
 	Path string `yaml:"path,omitempty"`
 
-	// Optional: namespace where the auth method resides
+	// Namespace specifies the namespace where the auth method resides.
 	Namespace string `yaml:"namespace,omitempty"`
 
 	// Token auth
@@ -32,11 +32,16 @@ type VaultAuthConfig struct {
 	SecretIDPath string `yaml:"secretIdPath,omitempty"`
 }
 
-// VaultConfig contains configuration for connecting to Vault
+// VaultConfig contains configuration for connecting to Vault.
 type VaultConfig struct {
-	Address       string          `yaml:"address"`
-	NamespaceRoot string          `yaml:"namespaceRoot,omitempty"`
-	Auth          VaultAuthConfig `yaml:"auth"`
+	// Address specifies the Vault server address.
+	Address string `yaml:"address"`
+
+	// NamespaceRoot specifies the root namespace path in Vault.
+	NamespaceRoot string `yaml:"namespaceRoot,omitempty"`
+
+	// Auth contains authentication configuration.
+	Auth VaultAuthConfig `yaml:"auth"`
 
 	// TLS config
 	CACert     string `yaml:"caCert,omitempty"`
@@ -45,26 +50,35 @@ type VaultConfig struct {
 	Insecure   bool   `yaml:"insecure,omitempty"`
 }
 
-// ControllerConfig contains all configuration for the controller
+// ControllerConfig contains all configuration for the controller.
 type ControllerConfig struct {
 	// Vault configuration
 	Vault VaultConfig `yaml:"vault"`
 
-	// Reconciliation configuration
-	ReconcileInterval     int  `yaml:"reconcileInterval"`
+	// ReconcileInterval specifies how often to reconcile namespaces (in seconds).
+	ReconcileInterval int `yaml:"reconcileInterval"`
+
+	// DeleteVaultNamespaces indicates whether to delete Vault namespaces when
+	// the corresponding Kubernetes namespace is deleted.
 	DeleteVaultNamespaces bool `yaml:"deleteVaultNamespaces"` // Removed omitempty to ensure it's always included in YAML
 
-	// Namespace mapping configuration
-	NamespaceFormat   string   `yaml:"namespaceFormat"`
+	// NamespaceFormat specifies the format string for Vault namespace names.
+	NamespaceFormat string `yaml:"namespaceFormat"`
+
+	// IncludeNamespaces specifies patterns of namespaces to include.
 	IncludeNamespaces []string `yaml:"includeNamespaces,omitempty"`
+
+	// ExcludeNamespaces specifies patterns of namespaces to exclude.
 	ExcludeNamespaces []string `yaml:"excludeNamespaces,omitempty"`
 
-	// Controller-runtime configuration
+	// MetricsBindAddress specifies the address to bind metrics server.
 	MetricsBindAddress string `yaml:"metricsBindAddress"`
-	LeaderElection     bool   `yaml:"leaderElection"` // Removed omitempty to ensure it's always included in YAML
+
+	// LeaderElection indicates whether to use leader election.
+	LeaderElection bool `yaml:"leaderElection"` // Removed omitempty to ensure it's always included in YAML
 }
 
-// LoadConfig loads configuration from a file
+// LoadConfig loads configuration from a file. If path is empty, default configuration is returned.
 func LoadConfig(path string) (*ControllerConfig, error) {
 	config := &ControllerConfig{
 		// Default values
@@ -83,13 +97,13 @@ func LoadConfig(path string) (*ControllerConfig, error) {
 	// Read config file
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return nil, fmt.Errorf("failed to read config file %q: %w", path, err)
 	}
 
 	// Parse config - use a temporary struct to ensure all fields are properly unmarshaled
 	var tempConfig ControllerConfig
 	if err := yaml.Unmarshal(data, &tempConfig); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		return nil, fmt.Errorf("failed to parse config file %q: %w", path, err)
 	}
 
 	// Now manually copy the values from tempConfig to config
@@ -134,7 +148,7 @@ func LoadConfig(path string) (*ControllerConfig, error) {
 	return config, nil
 }
 
-// validateConfig validates the configuration
+// validateConfig checks that the configuration is valid.
 func validateConfig(config *ControllerConfig) error {
 	// Validate Vault address
 	if config.Vault.Address == "" {

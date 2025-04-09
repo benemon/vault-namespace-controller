@@ -62,7 +62,7 @@ func TestSplitNamespacePath(t *testing.T) {
 	}
 }
 
-// MockVaultClient implements our Client interface for testing
+// MockVaultClient implements our Client interface for testing.
 type MockVaultClient struct {
 	mock.Mock
 }
@@ -82,7 +82,7 @@ func (m *MockVaultClient) DeleteNamespace(ctx context.Context, path string) erro
 	return args.Error(0)
 }
 
-// Let's test the logic of our implementation directly
+// TestNamespaceExistsLogic tests the logic for checking namespace existence.
 func TestNamespaceExistsLogic(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -159,7 +159,7 @@ func TestNamespaceExistsLogic(t *testing.T) {
 	}
 }
 
-// Let's verify how SetNamespace would be called
+// TestNamespaceHandling tests how SetNamespace is called.
 func TestNamespaceHandling(t *testing.T) {
 	// Define test cases for namespace handling
 	tests := []struct {
@@ -208,7 +208,7 @@ func TestNamespaceHandling(t *testing.T) {
 	}
 }
 
-// Test actual client functions
+// TestVaultClient_CreateNamespace tests the CreateNamespace method.
 func TestVaultClient_CreateNamespace(t *testing.T) {
 	// We can test CreateNamespace with a mock
 	mockClient := new(MockVaultClient)
@@ -227,6 +227,7 @@ func TestVaultClient_CreateNamespace(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
+// TestVaultClient_DeleteNamespace tests the DeleteNamespace method.
 func TestVaultClient_DeleteNamespace(t *testing.T) {
 	// We can test DeleteNamespace with a mock
 	mockClient := new(MockVaultClient)

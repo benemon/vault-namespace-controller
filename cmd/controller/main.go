@@ -1,20 +1,25 @@
+// Package main implements the entry point for the vault-namespace-controller.
 package main
 
 import (
 	"flag"
 	"os"
 
+	// Standard library imports
 	"k8s.io/apimachinery/pkg/runtime"
+
+	// Third-party imports
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	webhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	// Project imports
 	"github.com/benemon/vault-namespace-controller/pkg/config"
 	"github.com/benemon/vault-namespace-controller/pkg/controller"
 	"github.com/benemon/vault-namespace-controller/pkg/vault"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	webhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
 var (
@@ -26,6 +31,7 @@ func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
 }
 
+// main is the entry point for the vault-namespace-controller.
 func main() {
 	var configPath string
 	flag.StringVar(&configPath, "config", "", "Path to controller config file")
@@ -40,17 +46,18 @@ func main() {
 	// Load configuration
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		setupLog.Error(err, "unable to load controller configuration")
+		setupLog.Error(err, "Unable to load controller configuration", "configPath", configPath)
 		os.Exit(1)
 	}
 
 	// Create vault client
 	vaultClient, err := vault.NewClient(cfg.Vault)
 	if err != nil {
-		setupLog.Error(err, "unable to create Vault client")
+		setupLog.Error(err, "Unable to create Vault client", "vaultAddress", cfg.Vault.Address)
 		os.Exit(1)
 	}
 
+	// Create manager for controller
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:           scheme,
 		Metrics:          metricsserver.Options{BindAddress: cfg.MetricsBindAddress},
@@ -59,24 +66,31 @@ func main() {
 		LeaderElectionID: "vault-namespace-controller-leader",
 	})
 	if err != nil {
-		setupLog.Error(err, "unable to start manager")
+		setupLog.Error(err, "Unable to start manager")
 		os.Exit(1)
 	}
 
-	if err = (&controller.NamespaceReconciler{
+	// Create and set up the namespace controller
+	namespaceController := &controller.NamespaceReconciler{
 		Client:      mgr.GetClient(),
 		Log:         ctrl.Log.WithName("controllers").WithName("Namespace"),
 		Scheme:      mgr.GetScheme(),
 		VaultClient: vaultClient,
 		Config:      cfg,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Namespace")
+	}
+
+	if err = namespaceController.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Unable to create controller", "controller", "Namespace")
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager")
+	setupLog.Info("Starting manager",
+		"metricsBindAddress", cfg.MetricsBindAddress,
+		"leaderElection", cfg.LeaderElection,
+		"reconcileInterval", cfg.ReconcileInterval)
+
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem running manager")
+		setupLog.Error(err, "Problem running manager")
 		os.Exit(1)
 	}
 }

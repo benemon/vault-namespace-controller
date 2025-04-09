@@ -17,7 +17,7 @@ import (
 	"github.com/benemon/vault-namespace-controller/pkg/config"
 )
 
-// mockVaultClient is a mock implementation of the vault.Client interface
+// mockVaultClient is a mock implementation of the vault.Client interface.
 type mockVaultClient struct {
 	mock.Mock
 }
@@ -309,6 +309,54 @@ func TestNamespaceReconciler_Reconcile(t *testing.T) {
 
 			// Assert that the expected methods were called
 			mockClient.AssertExpectations(t)
+		})
+	}
+}
+
+// TestMatchesAnyPattern tests the pattern matching helper function.
+func TestMatchesAnyPattern(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		patterns []string
+		expected bool
+	}{
+		{
+			name:     "match single pattern",
+			input:    "test-namespace",
+			patterns: []string{"test-.*"},
+			expected: true,
+		},
+		{
+			name:     "match one of multiple patterns",
+			input:    "test-namespace",
+			patterns: []string{"prod-.*", "test-.*", "dev-.*"},
+			expected: true,
+		},
+		{
+			name:     "no match",
+			input:    "staging-namespace",
+			patterns: []string{"prod-.*", "test-.*", "dev-.*"},
+			expected: false,
+		},
+		{
+			name:     "empty patterns",
+			input:    "test-namespace",
+			patterns: []string{},
+			expected: false,
+		},
+		{
+			name:     "exact match",
+			input:    "kube-system",
+			patterns: []string{"^kube-system$"},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchesAnyPattern(tt.input, tt.patterns)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

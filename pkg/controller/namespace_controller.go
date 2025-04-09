@@ -17,7 +17,7 @@ import (
 	"github.com/go-logr/logr"
 )
 
-// NamespaceReconciler reconciles a Namespace object
+// NamespaceReconciler reconciles a Namespace object.
 type NamespaceReconciler struct {
 	client.Client
 	Log         logr.Logger
@@ -25,13 +25,13 @@ type NamespaceReconciler struct {
 	VaultClient vault.Client
 	Config      *config.ControllerConfig
 
-	// Add a function field for testing
+	// SyncChecker is a function for testing
 	syncChecker func(string) bool
 }
 
 // +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch
 
-// Reconcile handles the reconciliation logic for Kubernetes namespaces
+// Reconcile handles the reconciliation logic for Kubernetes namespaces.
 func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := r.Log.WithValues("namespace", req.Name)
 	log.Info("Reconciling namespace")
@@ -44,7 +44,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			log.Info("Namespace not found, likely deleted")
 			if err := r.handleNamespaceDeletion(ctx, req.Name); err != nil {
 				log.Error(err, "Failed to delete Vault namespace")
-				return ctrl.Result{RequeueAfter: time.Second * 30}, err
+				return ctrl.Result{RequeueAfter: time.Second * 30}, fmt.Errorf("failed to delete Vault namespace for %q: %w", req.Name, err)
 			}
 			return ctrl.Result{}, nil
 		}
@@ -61,14 +61,24 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Handle namespace creation or update
 	if err := r.handleNamespaceCreation(ctx, namespace.Name); err != nil {
 		log.Error(err, "Failed to create or update Vault namespace")
-		return ctrl.Result{RequeueAfter: time.Second * 30}, err
+		return ctrl.Result{RequeueAfter: time.Second * 30}, fmt.Errorf("failed to create or update Vault namespace for %q: %w", namespace.Name, err)
 	}
 
 	log.Info("Successfully reconciled namespace")
 	return ctrl.Result{}, nil
 }
 
-// shouldSyncNamespace checks if the namespace should be synced based on configuration rules
+// matchesAnyPattern checks if a string matches any of the provided regex patterns.
+func matchesAnyPattern(name string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if match, _ := regexp.MatchString(pattern, name); match {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldSyncNamespace checks if the namespace should be synced based on configuration rules.
 func (r *NamespaceReconciler) shouldSyncNamespace(namespaceName string) bool {
 	// If syncChecker is set (for testing), use that
 	if r.syncChecker != nil {
@@ -83,51 +93,39 @@ func (r *NamespaceReconciler) shouldSyncNamespace(namespaceName string) bool {
 		"^default$",     // The default namespace
 	}
 
-	// Check if namespace matches any system namespace pattern and is not explicitly included
-	for _, pattern := range systemNamespacePatterns {
-		if match, _ := regexp.MatchString(pattern, namespaceName); match {
-			// Check if explicitly included
-			for _, includePattern := range r.Config.IncludeNamespaces {
-				if match, _ := regexp.MatchString(includePattern, namespaceName); match {
-					return true
-				}
-			}
-			return false
-		}
+	// Check if namespace is a system namespace
+	isSystemNamespace := matchesAnyPattern(namespaceName, systemNamespacePatterns)
+
+	// System namespaces are only included if explicitly listed in includeNamespaces
+	if isSystemNamespace {
+		return matchesAnyPattern(namespaceName, r.Config.IncludeNamespaces)
 	}
 
-	// Check exclude patterns
-	for _, pattern := range r.Config.ExcludeNamespaces {
-		if match, _ := regexp.MatchString(pattern, namespaceName); match {
-			return false
-		}
-	}
-
-	// Check include patterns if specified
-	if len(r.Config.IncludeNamespaces) > 0 {
-		for _, pattern := range r.Config.IncludeNamespaces {
-			if match, _ := regexp.MatchString(pattern, namespaceName); match {
-				return true
-			}
-		}
+	// Check exclude patterns - if matched, don't sync
+	if matchesAnyPattern(namespaceName, r.Config.ExcludeNamespaces) {
 		return false
+	}
+
+	// If includeNamespaces is specified, only sync namespaces that match these patterns
+	if len(r.Config.IncludeNamespaces) > 0 {
+		return matchesAnyPattern(namespaceName, r.Config.IncludeNamespaces)
 	}
 
 	// Default to include if not explicitly excluded
 	return true
 }
 
-// handleNamespaceCreation creates or updates a Vault namespace for the Kubernetes namespace
+// handleNamespaceCreation creates or updates a Vault namespace for the Kubernetes namespace.
 func (r *NamespaceReconciler) handleNamespaceCreation(ctx context.Context, namespaceName string) error {
 	vaultNamespacePath := r.formatVaultNamespacePath(namespaceName)
 	exists, err := r.VaultClient.NamespaceExists(ctx, vaultNamespacePath)
 	if err != nil {
-		return fmt.Errorf("failed to check if Vault namespace exists: %w", err)
+		return fmt.Errorf("failed to check if Vault namespace %q exists: %w", vaultNamespacePath, err)
 	}
 
 	if !exists {
 		if err := r.VaultClient.CreateNamespace(ctx, vaultNamespacePath); err != nil {
-			return fmt.Errorf("failed to create Vault namespace: %w", err)
+			return fmt.Errorf("failed to create Vault namespace %q: %w", vaultNamespacePath, err)
 		}
 		r.Log.Info("Created Vault namespace", "vaultNamespace", vaultNamespacePath)
 	} else {
@@ -137,7 +135,7 @@ func (r *NamespaceReconciler) handleNamespaceCreation(ctx context.Context, names
 	return nil
 }
 
-// handleNamespaceDeletion deletes the corresponding Vault namespace
+// handleNamespaceDeletion deletes the corresponding Vault namespace.
 func (r *NamespaceReconciler) handleNamespaceDeletion(ctx context.Context, namespaceName string) error {
 	if !r.Config.DeleteVaultNamespaces {
 		r.Log.Info("Vault namespace deletion is disabled, skipping", "k8sNamespace", namespaceName)
@@ -147,12 +145,12 @@ func (r *NamespaceReconciler) handleNamespaceDeletion(ctx context.Context, names
 	vaultNamespacePath := r.formatVaultNamespacePath(namespaceName)
 	exists, err := r.VaultClient.NamespaceExists(ctx, vaultNamespacePath)
 	if err != nil {
-		return fmt.Errorf("failed to check if Vault namespace exists: %w", err)
+		return fmt.Errorf("failed to check if Vault namespace %q exists: %w", vaultNamespacePath, err)
 	}
 
 	if exists {
 		if err := r.VaultClient.DeleteNamespace(ctx, vaultNamespacePath); err != nil {
-			return fmt.Errorf("failed to delete Vault namespace: %w", err)
+			return fmt.Errorf("failed to delete Vault namespace %q: %w", vaultNamespacePath, err)
 		}
 		r.Log.Info("Deleted Vault namespace", "vaultNamespace", vaultNamespacePath)
 	} else {
@@ -162,7 +160,7 @@ func (r *NamespaceReconciler) handleNamespaceDeletion(ctx context.Context, names
 	return nil
 }
 
-// formatVaultNamespacePath applies the namespace format pattern and prepends the root path if configured
+// formatVaultNamespacePath applies the namespace format pattern and prepends the root path if configured.
 func (r *NamespaceReconciler) formatVaultNamespacePath(namespaceName string) string {
 	// Apply namespace format pattern if configured
 	formattedName := namespaceName
@@ -188,7 +186,7 @@ func (r *NamespaceReconciler) formatVaultNamespacePath(namespaceName string) str
 	return formattedName
 }
 
-// SetupWithManager sets up the controller with the Manager
+// SetupWithManager sets up the controller with the Manager.
 func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}).

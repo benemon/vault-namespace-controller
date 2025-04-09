@@ -12,25 +12,44 @@ import (
 	auth "github.com/hashicorp/vault/api/auth/kubernetes"
 )
 
-// Client provides methods for interacting with Vault Enterprise namespaces
+// Client provides methods for interacting with Vault Enterprise namespaces.
 type Client interface {
-	// NamespaceExists checks if a namespace exists
+	// NamespaceExists checks if a namespace exists.
 	NamespaceExists(ctx context.Context, path string) (bool, error)
 
-	// CreateNamespace creates a namespace
+	// CreateNamespace creates a namespace.
 	CreateNamespace(ctx context.Context, path string) error
 
-	// DeleteNamespace deletes a namespace
+	// DeleteNamespace deletes a namespace.
 	DeleteNamespace(ctx context.Context, path string) error
 }
 
-// vaultClient implements the Client interface
+// vaultClient implements the Client interface.
 type vaultClient struct {
 	client *api.Client
 	config *config.VaultConfig
 }
 
-// NewClient creates a new Vault client
+// splitNamespacePath splits a namespace path into parent and child components.
+func splitNamespacePath(namespacePath string) (parent, child string) {
+	// Clean the path by removing leading/trailing slashes
+	cleanPath := strings.Trim(namespacePath, "/")
+
+	// If there's no separator, return empty parent and the path as child
+	if !strings.Contains(cleanPath, "/") {
+		return "", cleanPath
+	}
+
+	// Split the path into parent and child
+	dir, base := path.Split(cleanPath)
+
+	// Clean the parent by removing trailing slash
+	parent = strings.TrimSuffix(dir, "/")
+
+	return parent, base
+}
+
+// NewClient creates a new Vault client.
 func NewClient(config config.VaultConfig) (Client, error) {
 	// Create Vault API client configuration
 	clientConfig := api.DefaultConfig()
@@ -45,7 +64,7 @@ func NewClient(config config.VaultConfig) (Client, error) {
 			Insecure:   config.Insecure,
 		}
 		if err := clientConfig.ConfigureTLS(tlsConfig); err != nil {
-			return nil, fmt.Errorf("failed to configure TLS: %w", err)
+			return nil, fmt.Errorf("failed to configure TLS for Vault client: %w", err)
 		}
 	}
 
@@ -75,7 +94,7 @@ func NewClient(config config.VaultConfig) (Client, error) {
 	}, nil
 }
 
-// authenticate authenticates to Vault using the configured method
+// authenticate authenticates to Vault using the configured method.
 func authenticate(client *api.Client, config config.VaultConfig) error {
 	// Store the current namespace to restore it later
 	currentNamespace := client.Namespace()
@@ -88,100 +107,112 @@ func authenticate(client *api.Client, config config.VaultConfig) error {
 
 	switch config.Auth.Type {
 	case "token":
-		// Get token either directly or from file
-		token := config.Auth.Token
-		if token == "" && config.Auth.TokenPath != "" {
-			// Read token from file
-			tokenBytes, err := os.ReadFile(config.Auth.TokenPath)
-			if err != nil {
-				return fmt.Errorf("failed to read token from file: %w", err)
-			}
-			token = strings.TrimSpace(string(tokenBytes))
-		}
-
-		client.SetToken(token)
-		return nil
-
+		return authenticateWithToken(client, config)
 	case "kubernetes":
-		// Determine the auth path
-		kubernetesAuthPath := "kubernetes"
-		if config.Auth.Path != "" {
-			kubernetesAuthPath = config.Auth.Path
-		}
-
-		k8sAuth, err := auth.NewKubernetesAuth(
-			config.Auth.Role,
-			auth.WithServiceAccountTokenPath("/var/run/secrets/kubernetes.io/serviceaccount/token"),
-			auth.WithMountPath(kubernetesAuthPath),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to initialize Kubernetes auth: %w", err)
-		}
-
-		authInfo, err := client.Auth().Login(context.Background(), k8sAuth)
-		if err != nil {
-			return fmt.Errorf("failed to login with Kubernetes auth: %w", err)
-		}
-
-		if authInfo == nil {
-			return fmt.Errorf("no auth info was returned after login")
-		}
-
-		return nil
-
+		return authenticateWithKubernetes(client, config)
 	case "approle":
-		// Determine the AppRole auth path
-		appRoleAuthPath := "approle"
-		if config.Auth.Path != "" {
-			appRoleAuthPath = config.Auth.Path
-		}
-
-		// Get roleID and secretID either directly or from files
-		roleID := config.Auth.RoleID
-		secretID := config.Auth.SecretID
-
-		if roleID == "" && config.Auth.RoleIDPath != "" {
-			// Read roleID from file
-			roleIDBytes, err := os.ReadFile(config.Auth.RoleIDPath)
-			if err != nil {
-				return fmt.Errorf("failed to read roleID from file: %w", err)
-			}
-			roleID = strings.TrimSpace(string(roleIDBytes))
-		}
-
-		if secretID == "" && config.Auth.SecretIDPath != "" {
-			// Read secretID from file
-			secretIDBytes, err := os.ReadFile(config.Auth.SecretIDPath)
-			if err != nil {
-				return fmt.Errorf("failed to read secretID from file: %w", err)
-			}
-			secretID = strings.TrimSpace(string(secretIDBytes))
-		}
-
-		data := map[string]interface{}{
-			"role_id":   roleID,
-			"secret_id": secretID,
-		}
-
-		loginPath := fmt.Sprintf("auth/%s/login", appRoleAuthPath)
-		resp, err := client.Logical().Write(loginPath, data)
-		if err != nil {
-			return fmt.Errorf("failed to login with AppRole: %w", err)
-		}
-
-		if resp == nil || resp.Auth == nil {
-			return fmt.Errorf("no auth info was returned after AppRole login")
-		}
-
-		client.SetToken(resp.Auth.ClientToken)
-		return nil
-
+		return authenticateWithAppRole(client, config)
 	default:
 		return fmt.Errorf("unsupported auth method: %s", config.Auth.Type)
 	}
 }
 
-// NamespaceExists checks if a namespace exists in Vault
+// authenticateWithToken performs token-based authentication.
+func authenticateWithToken(client *api.Client, config config.VaultConfig) error {
+	// Get token either directly or from file
+	token := config.Auth.Token
+	if token == "" && config.Auth.TokenPath != "" {
+		// Read token from file
+		tokenBytes, err := os.ReadFile(config.Auth.TokenPath)
+		if err != nil {
+			return fmt.Errorf("failed to read token from file %q: %w", config.Auth.TokenPath, err)
+		}
+		token = strings.TrimSpace(string(tokenBytes))
+	}
+
+	client.SetToken(token)
+	return nil
+}
+
+// authenticateWithKubernetes performs Kubernetes-based authentication.
+func authenticateWithKubernetes(client *api.Client, config config.VaultConfig) error {
+	// Determine the auth path
+	kubernetesAuthPath := "kubernetes"
+	if config.Auth.Path != "" {
+		kubernetesAuthPath = config.Auth.Path
+	}
+
+	k8sAuth, err := auth.NewKubernetesAuth(
+		config.Auth.Role,
+		auth.WithServiceAccountTokenPath("/var/run/secrets/kubernetes.io/serviceaccount/token"),
+		auth.WithMountPath(kubernetesAuthPath),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to initialize Kubernetes auth: %w", err)
+	}
+
+	authInfo, err := client.Auth().Login(context.Background(), k8sAuth)
+	if err != nil {
+		return fmt.Errorf("failed to login with Kubernetes auth: %w", err)
+	}
+
+	if authInfo == nil {
+		return fmt.Errorf("no auth info was returned after login")
+	}
+
+	return nil
+}
+
+// authenticateWithAppRole performs AppRole-based authentication.
+func authenticateWithAppRole(client *api.Client, config config.VaultConfig) error {
+	// Determine the AppRole auth path
+	appRoleAuthPath := "approle"
+	if config.Auth.Path != "" {
+		appRoleAuthPath = config.Auth.Path
+	}
+
+	// Get roleID and secretID either directly or from files
+	roleID := config.Auth.RoleID
+	secretID := config.Auth.SecretID
+
+	if roleID == "" && config.Auth.RoleIDPath != "" {
+		// Read roleID from file
+		roleIDBytes, err := os.ReadFile(config.Auth.RoleIDPath)
+		if err != nil {
+			return fmt.Errorf("failed to read roleID from file %q: %w", config.Auth.RoleIDPath, err)
+		}
+		roleID = strings.TrimSpace(string(roleIDBytes))
+	}
+
+	if secretID == "" && config.Auth.SecretIDPath != "" {
+		// Read secretID from file
+		secretIDBytes, err := os.ReadFile(config.Auth.SecretIDPath)
+		if err != nil {
+			return fmt.Errorf("failed to read secretID from file %q: %w", config.Auth.SecretIDPath, err)
+		}
+		secretID = strings.TrimSpace(string(secretIDBytes))
+	}
+
+	data := map[string]interface{}{
+		"role_id":   roleID,
+		"secret_id": secretID,
+	}
+
+	loginPath := fmt.Sprintf("auth/%s/login", appRoleAuthPath)
+	resp, err := client.Logical().Write(loginPath, data)
+	if err != nil {
+		return fmt.Errorf("failed to login with AppRole: %w", err)
+	}
+
+	if resp == nil || resp.Auth == nil {
+		return fmt.Errorf("no auth info was returned after AppRole login")
+	}
+
+	client.SetToken(resp.Auth.ClientToken)
+	return nil
+}
+
+// NamespaceExists checks if a namespace exists in Vault.
 func (c *vaultClient) NamespaceExists(ctx context.Context, namespacePath string) (bool, error) {
 	// Get parent namespace and child namespace
 	parent, child := splitNamespacePath(namespacePath)
@@ -205,7 +236,7 @@ func (c *vaultClient) NamespaceExists(ctx context.Context, namespacePath string)
 		if strings.Contains(err.Error(), "404") {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to list namespaces: %w", err)
+		return false, fmt.Errorf("failed to list namespaces in %q: %w", parent, err)
 	}
 
 	// Handle nil response
@@ -216,7 +247,7 @@ func (c *vaultClient) NamespaceExists(ctx context.Context, namespacePath string)
 	// Extract list of keys
 	keys, ok := secret.Data["keys"].([]interface{})
 	if !ok {
-		return false, fmt.Errorf("unexpected response format: 'keys' is not a list")
+		return false, fmt.Errorf("unexpected response format when listing namespaces: 'keys' is not a list")
 	}
 
 	// Look for the child namespace
@@ -235,7 +266,7 @@ func (c *vaultClient) NamespaceExists(ctx context.Context, namespacePath string)
 	return false, nil
 }
 
-// CreateNamespace creates a namespace in Vault Enterprise
+// CreateNamespace creates a namespace in Vault Enterprise.
 func (c *vaultClient) CreateNamespace(ctx context.Context, namespacePath string) error {
 	// Get parent namespace and child namespace
 	parent, child := splitNamespacePath(namespacePath)
@@ -251,18 +282,18 @@ func (c *vaultClient) CreateNamespace(ctx context.Context, namespacePath string)
 
 	resp, err := c.client.RawRequestWithContext(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to create namespace %s: %w", namespacePath, err)
+		return fmt.Errorf("failed to create namespace %q: %w", namespacePath, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 && resp.StatusCode != 204 {
-		return fmt.Errorf("unexpected status code when creating namespace: %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status code when creating namespace %q: %d", namespacePath, resp.StatusCode)
 	}
 
 	return nil
 }
 
-// DeleteNamespace deletes a namespace in Vault Enterprise
+// DeleteNamespace deletes a namespace in Vault Enterprise.
 func (c *vaultClient) DeleteNamespace(ctx context.Context, namespacePath string) error {
 	// Get parent namespace and child namespace
 	parent, child := splitNamespacePath(namespacePath)
@@ -278,32 +309,13 @@ func (c *vaultClient) DeleteNamespace(ctx context.Context, namespacePath string)
 
 	resp, err := c.client.RawRequestWithContext(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to delete namespace %s: %w", namespacePath, err)
+		return fmt.Errorf("failed to delete namespace %q: %w", namespacePath, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 && resp.StatusCode != 204 {
-		return fmt.Errorf("unexpected status code when deleting namespace: %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status code when deleting namespace %q: %d", namespacePath, resp.StatusCode)
 	}
 
 	return nil
-}
-
-// splitNamespacePath splits a namespace path into parent and child components
-func splitNamespacePath(namespacePath string) (parent, child string) {
-	// Clean the path by removing leading/trailing slashes
-	cleanPath := strings.Trim(namespacePath, "/")
-
-	// If there's no separator, return empty parent and the path as child
-	if !strings.Contains(cleanPath, "/") {
-		return "", cleanPath
-	}
-
-	// Split the path into parent and child
-	dir, base := path.Split(cleanPath)
-
-	// Clean the parent by removing trailing slash
-	parent = strings.TrimSuffix(dir, "/")
-
-	return parent, base
 }
