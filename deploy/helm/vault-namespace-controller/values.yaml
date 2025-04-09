@@ -1,0 +1,101 @@
+# Default values for vault-namespace-controller.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/benemon/vault-namespace-controller
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Controller configuration
+controller:
+  # Reconciliation interval in seconds
+  reconcileInterval: 300
+  # Whether to delete Vault namespaces when K8s namespaces are deleted
+  deleteVaultNamespaces: true
+  # Format string for Vault namespace names
+  namespaceFormat: "%s"
+  # Regular expressions for namespaces to include
+  includeNamespaces: []
+  # Regular expressions for namespaces to exclude
+  excludeNamespaces: []
+  # Metrics bind address
+  metricsBindAddress: ":8080"
+  # Whether to enable leader election
+  leaderElection: true
+
+# Vault configuration
+vault:
+  # Vault server address
+  address: ""
+  # Vault namespace root (optional, used for HCP Vault Dedicated, etc.)
+  namespaceRoot: ""
+  
+  # TLS configuration
+  caCert: ""
+  clientCert: ""
+  clientKey: ""
+  insecure: false
+  
+  # Authentication configuration
+  auth:
+    # Auth type: kubernetes, token, or approle
+    type: "kubernetes"
+    # Optional: custom path where the auth method is mounted
+    path: ""
+    # Optional: namespace where the auth method resides
+    namespace: ""
+    
+    # Token auth
+    token: ""
+    tokenPath: ""
+    
+    # Kubernetes auth
+    role: "vault-namespace-controller"
+    
+    # AppRole auth
+    roleId: ""
+    secretId: ""
+    roleIdPath: ""
+    secretIdPath: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

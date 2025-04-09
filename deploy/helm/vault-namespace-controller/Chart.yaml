@@ -1,0 +1,17 @@
+apiVersion: v2
+name: vault-namespace-controller
+description: A Kubernetes controller that automatically synchronizes Kubernetes namespaces with Vault Enterprise namespaces
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - vault
+  - hashicorp
+  - kubernetes
+  - namespace
+home: https://github.com/benemon/vault-namespace-controller
+sources:
+  - https://github.com/benemon/vault-namespace-controller
+maintainers:
+  - name: benemon
+    url: https://github.com/benemon

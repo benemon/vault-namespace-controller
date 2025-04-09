@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vault-namespace-controller.fullname" . }}
+  labels:
+    {{- include "vault-namespace-controller.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    vault:
+      address: {{ required "A valid Vault server address is required" .Values.vault.address | quote }}
+      {{- if .Values.vault.namespaceRoot }}
+      namespaceRoot: {{ .Values.vault.namespaceRoot | quote }}
+      {{- end }}
+      {{- if or .Values.vault.caCert .Values.vault.clientCert .Values.vault.clientKey .Values.vault.insecure }}
+      {{- if .Values.vault.caCert }}
+      caCert: {{ .Values.vault.caCert | quote }}
+      {{- end }}
+      {{- if .Values.vault.clientCert }}
+      clientCert: {{ .Values.vault.clientCert | quote }}
+      {{- end }}
+      {{- if .Values.vault.clientKey }}
+      clientKey: {{ .Values.vault.clientKey | quote }}
+      {{- end }}
+      {{- if .Values.vault.insecure }}
+      insecure: {{ .Values.vault.insecure }}
+      {{- end }}
+      {{- end }}
+      auth:
+        type: {{ .Values.vault.auth.type | quote }}
+        {{- if .Values.vault.auth.path }}
+        path: {{ .Values.vault.auth.path | quote }}
+        {{- end }}
+        {{- if .Values.vault.auth.namespace }}
+        namespace: {{ .Values.vault.auth.namespace | quote }}
+        {{- end }}
+        {{- if eq .Values.vault.auth.type "token" }}
+        {{- if .Values.vault.auth.token }}
+        token: {{ .Values.vault.auth.token | quote }}
+        {{- else if .Values.vault.auth.tokenPath }}
+        tokenPath: {{ .Values.vault.auth.tokenPath | quote }}
+        {{- end }}
+        {{- end }}
+        {{- if eq .Values.vault.auth.type "kubernetes" }}
+        role: {{ .Values.vault.auth.role | quote }}
+        {{- end }}
+        {{- if eq .Values.vault.auth.type "approle" }}
+        {{- if .Values.vault.auth.roleId }}
+        roleId: {{ .Values.vault.auth.roleId | quote }}
+        {{- end }}
+        {{- if .Values.vault.auth.secretId }}
+        secretId: {{ .Values.vault.auth.secretId | quote }}
+        {{- end }}
+        {{- if .Values.vault.auth.roleIdPath }}
+        roleIdPath: {{ .Values.vault.auth.roleIdPath | quote }}
+        {{- end }}
+        {{- if .Values.vault.auth.secretIdPath }}
+        secretIdPath: {{ .Values.vault.auth.secretIdPath | quote }}
+        {{- end }}
+        {{- end }}
+    reconcileInterval: {{ .Values.controller.reconcileInterval }}
+    deleteVaultNamespaces: {{ .Values.controller.deleteVaultNamespaces }}
+    namespaceFormat: {{ .Values.controller.namespaceFormat | quote }}
+    {{- if .Values.controller.includeNamespaces }}
+    includeNamespaces:
+      {{- range .Values.controller.includeNamespaces }}
+      - {{ . | quote }}
+      {{- end }}
+    {{- end }}
+    {{- if .Values.controller.excludeNamespaces }}
+    excludeNamespaces:
+      {{- range .Values.controller.excludeNamespaces }}
+      - {{ . | quote }}
+      {{- end }}
+    {{- end }}
+    metricsBindAddress: {{ .Values.controller.metricsBindAddress | quote }}
+    leaderElection: {{ .Values.controller.leaderElection }}

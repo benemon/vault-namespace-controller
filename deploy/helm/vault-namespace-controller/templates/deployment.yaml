@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vault-namespace-controller.fullname" . }}
+  labels:
+    {{- include "vault-namespace-controller.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "vault-namespace-controller.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "vault-namespace-controller.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "vault-namespace-controller.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --config=/etc/vault-namespace-controller/config.yaml
+          volumeMounts:
+            - name: config
+              mountPath: /etc/vault-namespace-controller
+              readOnly: true
+            {{- if .Values.vault.auth.tokenPath }}
+            - name: vault-token
+              mountPath: {{ dir .Values.vault.auth.tokenPath }}
+              readOnly: true
+            {{- end }}
+            {{- if or .Values.vault.auth.roleIdPath .Values.vault.auth.secretIdPath }}
+            - name: vault-approle
+              mountPath: {{ dir (default .Values.vault.auth.roleIdPath .Values.vault.auth.secretIdPath) }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.vault.caCert }}
+            - name: vault-tls
+              mountPath: {{ dir .Values.vault.caCert }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.vault.clientCert }}
+            - name: vault-client-tls
+              mountPath: {{ dir .Values.vault.clientCert }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.vault.clientKey }}
+            - name: vault-client-key
+              mountPath: {{ dir .Values.vault.clientKey }}
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "vault-namespace-controller.fullname" . }}
+        {{- if .Values.vault.auth.tokenPath }}
+        - name: vault-token
+          secret:
+            secretName: {{ include "vault-namespace-controller.fullname" . }}-token-path
+            defaultMode: 0400
+        {{- end }}
+        {{- if or .Values.vault.auth.roleIdPath .Values.vault.auth.secretIdPath }}
+        - name: vault-approle
+          secret:
+            secretName: {{ include "vault-namespace-controller.fullname" . }}-approle-path
+            defaultMode: 0400
+        {{- end }}
+        {{- if .Values.vault.caCert }}
+        - name: vault-tls
+          secret:
+            secretName: {{ include "vault-namespace-controller.fullname" . }}-ca-cert
+            defaultMode: 0400
+        {{- end }}
+        {{- if .Values.vault.clientCert }}
+        - name: vault-client-tls
+          secret:
+            secretName: {{ include "vault-namespace-controller.fullname" . }}-client-cert
+            defaultMode: 0400
+        {{- end }}
+        {{- if .Values.vault.clientKey }}
+        - name: vault-client-key
+          secret:
+            secretName: {{ include "vault-namespace-controller.fullname" . }}-client-key
+            defaultMode: 0400
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,22 @@
+Thank you for installing {{ .Chart.Name }}.
+
+The vault-namespace-controller is now running in your cluster and should begin
+synchronizing Kubernetes namespaces with Vault namespaces according to your
+configuration.
+
+Configuration Details:
+---------------------
+  Vault Address: {{ .Values.vault.address }}
+  Authentication Method: {{ .Values.vault.auth.type }}
+  Namespace Format: {{ .Values.controller.namespaceFormat }}
+  Reconciliation Interval: {{ .Values.controller.reconcileInterval }} seconds
+  Delete Vault Namespaces: {{ .Values.controller.deleteVaultNamespaces }}
+
+To check the controller status:
+  kubectl --namespace {{ .Release.Namespace }} get pods -l "app.kubernetes.io/name={{ include "vault-namespace-controller.name" . }}"
+
+To view controller logs:
+  kubectl --namespace {{ .Release.Namespace }} logs -l "app.kubernetes.io/name={{ include "vault-namespace-controller.name" . }}"
+
+For more information, visit:
+  https://github.com/benemon/vault-namespace-controller
