@@ -29,7 +29,7 @@ go.sum
 .idea/
 .vscode/
 *.log
-*.yaml
+*.test.yaml
 
 # OS-specific files
 Thumbs.db
