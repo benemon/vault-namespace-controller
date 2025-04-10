@@ -19,9 +19,6 @@
 # Vendor directory (optional if using Go modules and not vendoring)
 vendor/
 
-# Dependency management files
-go.sum
-
 # IDE/editor files
 *.swp
 *.swo
