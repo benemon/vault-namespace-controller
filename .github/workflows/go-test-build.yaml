@@ -1,0 +1,80 @@
+name: Go Tests & Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force container build'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install dependencies
+        run: go mod tidy
+
+      - name: Run unit tests with coverage
+        run: |
+          go test ./... -coverprofile=coverage.out -v
+          go tool cover -html=coverage.out -o coverage.html
+          go tool cover -func=coverage.out
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage-report
+          path: |
+            coverage.out
+            coverage.html
+
+  build-and-push:
+    needs: test
+    if: |
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.force_build == true))
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build and push container
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Containerfile  # or ./build/Containerfile if that's your path
+          platforms: linux/amd64
+          push: true
+          tags: |
+            quay.io/benjamin_holmes/vault-namespace-controller:latest
+            ${{ github.event_name == 'schedule' && format('quay.io/benjamin_holmes/vault-namespace-controller:nightly-{0}', steps.date.outputs.date) || '' }}
