@@ -38,42 +38,77 @@ type NamespaceReconciler struct {
 func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	metrics.KubernetesEventsTotal.WithLabelValues("namespace").Inc()
 	startTime := time.Now()
-	log := r.Log.WithValues("namespace", req.Name, "reconcileID", fmt.Sprintf("%d", startTime.UnixNano()))
+
+	// Format the Vault namespace path
+	vaultNamespacePath := r.formatVaultNamespacePath(req.Name)
+
+	// Create logger with both namespace contexts already added
+	log := r.Log.WithValues(
+		"kubernetesNamespace", req.Name,
+		"vaultNamespace", vaultNamespacePath,
+		"reconcileID", fmt.Sprintf("%d", startTime.UnixNano()),
+	)
+
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	var namespace corev1.Namespace
 	if err := r.Get(ctx, req.NamespacedName, &namespace); err != nil {
 		if k8serrors.IsNotFound(err) {
-			log.Info("Namespace not found, handling deletion")
-			if err := r.handleNamespaceDeletion(ctx, req.Name); err != nil {
+			// Only log at INFO level for actual deletions
+			if r.Config.DeleteVaultNamespaces {
+				exists, _ := r.VaultClient.NamespaceExists(ctx, vaultNamespacePath)
+				if exists {
+					log.Info("Deleting Vault namespace")
+				}
+			}
+
+			// Handle the deletion
+			if err := r.handleNamespaceDeletion(ctx, vaultNamespacePath, log); err != nil {
+				log.Error(err, "Failed to delete Vault namespace")
 				metrics.ReconciliationTotal.WithLabelValues("error").Inc()
 				metrics.ErrorsTotal.WithLabelValues("delete").Inc()
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 			}
+
 			metrics.ReconciliationTotal.WithLabelValues("success").Inc()
 			metrics.ReconciliationDuration.WithLabelValues("delete").Observe(time.Since(startTime).Seconds())
 			return ctrl.Result{}, nil
 		}
+		log.Error(err, "Failed to get Kubernetes namespace")
 		metrics.ReconciliationTotal.WithLabelValues("error").Inc()
 		metrics.ErrorsTotal.WithLabelValues("get").Inc()
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	if !r.shouldSyncNamespace(namespace.Name) {
-		r.Log.V(1).Info("Namespace excluded from synchronization",
+		// Log exclusions at higher verbosity
+		log.V(1).Info("Namespace excluded from synchronization",
 			"includePatterns", r.Config.IncludeNamespaces,
 			"excludePatterns", r.Config.ExcludeNamespaces)
 		metrics.NamespacesExcluded.Set(1)
 		return ctrl.Result{}, nil
 	}
 
-	if err := r.handleNamespaceCreation(ctx, namespace.Name); err != nil {
+	// Before trying to create, check if it exists
+	exists, _ := r.VaultClient.NamespaceExists(ctx, vaultNamespacePath)
+	if !exists {
+		log.Info("Creating Vault namespace")
+	} else {
+		// Only log routine reconciliations at higher verbosity
+		log.V(1).Info("Reconciling existing namespace")
+	}
+
+	// Handle creation/reconciliation
+	if err := r.handleNamespaceCreation(ctx, vaultNamespacePath, log); err != nil {
+		log.Error(err, "Failed to create/reconcile Vault namespace")
 		metrics.ReconciliationTotal.WithLabelValues("error").Inc()
 		metrics.ErrorsTotal.WithLabelValues("create").Inc()
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
+	// Update metrics at higher verbosity
+	log.V(2).Info("Updating namespace metrics")
 	var nsList corev1.NamespaceList
 	if err := r.Client.List(ctx, &nsList); err == nil {
 		var managed, excluded, pending int
@@ -125,34 +160,52 @@ func matchesAnyPattern(name string, patterns []string) bool {
 	return false
 }
 
-func (r *NamespaceReconciler) handleNamespaceCreation(ctx context.Context, namespaceName string) error {
-	vaultNamespacePath := r.formatVaultNamespacePath(namespaceName)
-	exists, err := r.VaultClient.NamespaceExists(ctx, vaultNamespacePath)
+// Update the handler methods to accept a logger parameter
+func (r *NamespaceReconciler) handleNamespaceCreation(ctx context.Context, vaultNamespace string, log logr.Logger) error {
+
+	exists, err := r.VaultClient.NamespaceExists(ctx, vaultNamespace)
 	if err != nil {
+		log.Error(err, "Failed to check if Vault namespace exists")
 		return fmt.Errorf("%w: %v", ErrNamespaceCheck, err)
 	}
+
 	if !exists {
-		if err := r.VaultClient.CreateNamespace(ctx, vaultNamespacePath); err != nil {
+		// We already logged the creation in the main Reconcile function
+		if err := r.VaultClient.CreateNamespace(ctx, vaultNamespace); err != nil {
+			log.Error(err, "Failed to create Vault namespace")
 			return fmt.Errorf("%w: %v", ErrNamespaceCreation, err)
 		}
+		log.V(1).Info("Successfully created Vault namespace")
+	} else {
+		log.V(2).Info("Vault namespace already exists")
 	}
+
 	return nil
 }
 
-func (r *NamespaceReconciler) handleNamespaceDeletion(ctx context.Context, namespaceName string) error {
+func (r *NamespaceReconciler) handleNamespaceDeletion(ctx context.Context, vaultNamespace string, log logr.Logger) error {
 	if !r.Config.DeleteVaultNamespaces {
+		log.V(1).Info("Vault namespace deletion is disabled, skipping")
 		return nil
 	}
-	vaultNamespacePath := r.formatVaultNamespacePath(namespaceName)
-	exists, err := r.VaultClient.NamespaceExists(ctx, vaultNamespacePath)
+
+	exists, err := r.VaultClient.NamespaceExists(ctx, vaultNamespace)
 	if err != nil {
+		log.Error(err, "Failed to check if Vault namespace exists")
 		return fmt.Errorf("%w: %v", ErrNamespaceCheck, err)
 	}
+
 	if exists {
-		if err := r.VaultClient.DeleteNamespace(ctx, vaultNamespacePath); err != nil {
+		// We already logged the deletion in the main Reconcile function
+		if err := r.VaultClient.DeleteNamespace(ctx, vaultNamespace); err != nil {
+			log.Error(err, "Failed to delete Vault namespace")
 			return fmt.Errorf("%w: %v", ErrNamespaceDeletion, err)
 		}
+		log.V(1).Info("Successfully deleted Vault namespace")
+	} else {
+		log.V(2).Info("Vault namespace does not exist, skipping deletion")
 	}
+
 	return nil
 }
 

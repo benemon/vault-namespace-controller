@@ -49,7 +49,7 @@ func main() {
 	flag.StringVar(&configPath, "config", "", "Path to controller config file")
 
 	opts := zap.Options{
-		Development: true,
+		Development: false,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()

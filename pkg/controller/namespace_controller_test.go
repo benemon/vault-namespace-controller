@@ -490,7 +490,7 @@ func TestHandleNamespaceCreation(t *testing.T) {
 			}
 
 			// Call the method
-			err := reconciler.handleNamespaceCreation(context.Background(), tt.namespaceName)
+			err := reconciler.handleNamespaceCreation(context.Background(), reconciler.formatVaultNamespacePath(tt.namespaceName), reconciler.Log)
 
 			// Check the result
 			if tt.expectedError != nil {
@@ -583,7 +583,7 @@ func TestHandleNamespaceDeletion(t *testing.T) {
 			}
 
 			// Call the method
-			err := reconciler.handleNamespaceDeletion(context.Background(), tt.namespaceName)
+			err := reconciler.handleNamespaceDeletion(context.Background(), reconciler.formatVaultNamespacePath(tt.namespaceName), reconciler.Log)
 
 			// Check the result
 			if tt.expectedError != nil {
