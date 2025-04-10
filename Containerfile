@@ -18,6 +18,8 @@ WORKDIR /
 
 COPY --from=builder /workspace/vault-namespace-controller /vault-namespace-controller
 
-USER 65532:65532
+RUN chgrp -R 0 /vault-namespace-controller && \
+    chmod -R g=u /vault-namespace-controller && \
+    chmod 755 /vault-namespace-controller
 
 ENTRYPOINT ["/vault-namespace-controller"]

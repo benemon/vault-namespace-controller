@@ -2,7 +2,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/benemon/vault-namespace-controller
+  repository: quay.io/benjamin_holmes/vault-namespace-controller
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""
@@ -75,9 +75,6 @@ serviceAccount:
 # Pod security context
 podSecurityContext:
   runAsNonRoot: true
-  runAsUser: 65532
-  runAsGroup: 65532
-  fsGroup: 65532
 
 # Container security context
 securityContext:
